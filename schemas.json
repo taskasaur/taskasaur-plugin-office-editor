@@ -1,0 +1,42 @@
+[
+  {
+    "id": "office",
+    "pluginId": "office-editor",
+    "name": "Office",
+    "version": 1,
+    "fields": [
+      {
+        "id": "name",
+        "label": "Name",
+        "pgType": "text",
+        "required": true,
+        "nullable": false,
+        "array": false,
+        "sensitive": false
+      },
+      {
+        "id": "kind",
+        "label": "Kind",
+        "pgType": "text",
+        "required": true,
+        "nullable": false,
+        "array": false,
+        "choices": ["document", "spreadsheet", "presentation"],
+        "default": "document",
+        "control": "select",
+        "sensitive": false
+      },
+      {
+        "id": "file_id",
+        "label": "File",
+        "pgType": "uuid",
+        "required": true,
+        "nullable": false,
+        "array": false,
+        "sensitive": false,
+        "reference": "files",
+        "control": "reference"
+      }
+    ]
+  }
+]
