@@ -13,11 +13,13 @@ import type { AppRuntime } from "@taskasaur/plugin-host";
 import type { ResourceRecord } from "@taskasaur/platform/plugin-sdk";
 import { RecordTable } from "@taskasaur/ui/record-table";
 import { download } from "@taskasaur/ui/download";
+import { prepareEngine } from "./engine";
 import { Button } from "@taskasaur/ui/primitives/button";
 export default function OfficeView({ runtime }: { runtime: AppRuntime }) {
   const [document, setDocument] = useState<ResourceRecord | null>(null),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [preparation, setPreparation] = useState("");
   async function create(
     kind: "document" | "spreadsheet" | "presentation",
     file?: File,
@@ -25,6 +27,7 @@ export default function OfficeView({ runtime }: { runtime: AppRuntime }) {
     setBusy(true);
     setError("");
     try {
+      await prepareEngine(setPreparation);
       const templates = {
           document: "TextDocument.odt",
           spreadsheet: "Spreadsheet.ods",
@@ -38,7 +41,7 @@ export default function OfficeView({ runtime }: { runtime: AppRuntime }) {
       let bytes: Blob = file!;
       if (!file) {
         const response = await fetch(
-          `/office-engine/templates/${templates[kind]}`,
+          `/office-templates/${templates[kind]}`,
         );
         if (!response.ok)
           throw new Error(
@@ -73,9 +76,9 @@ export default function OfficeView({ runtime }: { runtime: AppRuntime }) {
   ) : (
     <div className="space-y-5">
       <p className="page-description">
-        Documents, spreadsheets, and presentations, edited locally with the
-        Collabora/LibreOffice engine. Save and reopen your files without a
-        server connection.
+        LibreOffice Writer, Calc, and Impress run locally through ZetaOffice.
+        The full upstream suite edits ODT, ODS, and ODP. Its engine is about
+        250 MB and is cached on first use for offline editing.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -125,6 +128,7 @@ export default function OfficeView({ runtime }: { runtime: AppRuntime }) {
           />
         </label>
       </div>
+      {preparation && <p role="status" className="text-sm text-muted-foreground">{preparation}</p>}
       {error && (
         <p role="alert" className="error-banner">
           {error}
@@ -151,11 +155,14 @@ function OfficeSession({
   const frame = useRef<HTMLIFrameElement>(null),
     session = useRef(crypto.randomUUID()),
     version = useRef<string | null>(null),
-    bytes = useRef<ArrayBuffer | null>(null);
+    bytes = useRef<ArrayBuffer | null>(null),
+    commits = useRef<Promise<void>>(Promise.resolve());
   const [source, setSource] = useState(""),
     [error, setError] = useState(""),
     [state, setState] = useState("Opening document…"),
-    [dirty, setDirty] = useState(false);
+    [dirty, setDirty] = useState(false),
+    [ready, setReady] = useState(false),
+    [saving, setSaving] = useState(false);
   const pending = useRef(
     new Map<
       string,
@@ -170,6 +177,7 @@ function OfficeSession({
     let disposed = false;
     void (async () => {
       try {
+        await prepareEngine(setState);
         const file = await runtime.db.records.get(String(record.data.file_id));
         if (!file) throw new Error("File metadata is missing");
         const stored = await runtime.fileBytes(file.id);
@@ -183,7 +191,7 @@ function OfficeSession({
           .replace(/[^a-z0-9]/gi, "");
         if (!disposed)
           setSource(
-            `/office-engine/cool.html?file_path=${encodeURIComponent("file:///taskasaur/document." + extension)}&taskasaurSession=${session.current}&lang=en-US`,
+            `/office-editor.html?file_path=${encodeURIComponent("file:///taskasaur/document." + extension)}&taskasaurSession=${session.current}&lang=en-US`,
           );
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -219,7 +227,7 @@ function OfficeSession({
           [copy],
         );
       }
-      if (message.type === "taskasaur.office.opened") setState("Ready");
+      if (message.type === "taskasaur.office.opened") {setReady(true);setState("Ready");}
       if (message.type === "taskasaur.office.dirty") {
         setDirty(true);
         setState("Unsaved changes");
@@ -230,7 +238,9 @@ function OfficeSession({
       }
       if (message.type === "taskasaur.office.saved") {
         const waiter = pending.current.get(message.requestId);
-        if (!waiter) return;
+        if (message.requestId && !waiter) return;
+        if (!(message.bytes instanceof ArrayBuffer) || message.bytes.byteLength > 256*1024*1024) return;
+        const commit = async()=>{
         try {
           const file = await runtime.db.records.get(
             String(record.data.file_id),
@@ -247,14 +257,17 @@ function OfficeSession({
           bytes.current = message.bytes;
           setDirty(false);
           setState("Saved on this device");
-          waiter.resolve();
+          waiter?.resolve();
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e));
-          waiter.reject(e instanceof Error ? e : new Error(String(e)));
+          waiter?.reject(e instanceof Error ? e : new Error(String(e)));
         } finally {
-          clearTimeout(waiter.timeout);
+          if(waiter)clearTimeout(waiter.timeout);
           pending.current.delete(message.requestId);
         }
+        };
+        commits.current=commits.current.then(commit,commit);
+        await commits.current;
       }
     };
     window.addEventListener("message", listener);
@@ -270,7 +283,10 @@ function OfficeSession({
     window.addEventListener("beforeunload", before);
     return () => window.removeEventListener("beforeunload", before);
   }, [dirty]);
-  function save() {
+  async function save() {
+    if(!ready || saving) return;
+    setSaving(true);
+    await commits.current;
     setError("");
     setState("Saving…");
     const requestId = crypto.randomUUID();
@@ -282,13 +298,13 @@ function OfficeSession({
         );
         setState("Unsaved changes");
         reject(new Error("Save timed out"));
-      }, 30000);
+      }, 60000);
       pending.current.set(requestId, { resolve, reject, timeout });
       frame.current?.contentWindow?.postMessage(
         { type: "taskasaur.office.save", session: session.current, requestId },
         location.origin,
       );
-    });
+    }).finally(()=>setSaving(false));
   }
   return (
     <div className="space-y-3">
@@ -310,7 +326,7 @@ function OfficeSession({
         </Button>
         <h2 className="font-medium flex-1">{String(record.data.name)}</h2>
         <span className="text-xs text-muted-foreground">{state}</span>
-        <Button onClick={() => void save().catch(() => undefined)}>
+        <Button disabled={!ready || saving} onClick={() => void save().catch(() => undefined)}>
           <Save size={14} />
           Save
         </Button>
@@ -336,7 +352,7 @@ function OfficeSession({
       {source && (
         <iframe
           ref={frame}
-          title="Offline office editor"
+          title="LibreOffice suite"
           src={source}
           className="w-full border rounded-xl bg-white h-[75dvh]"
           allow="clipboard-read; clipboard-write; fullscreen"

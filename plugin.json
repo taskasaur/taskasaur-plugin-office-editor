@@ -2,7 +2,7 @@
   "id": "office-editor",
   "name": "Office Editor",
   "description": "Offline documents, spreadsheets, and presentations.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "platformApi": "^1.0.0",
   "fieldSchemaApi": "^1.0.0",
   "publisher": "taskasaur",
@@ -13,15 +13,22 @@
   "ui": {
     "mode": "shared",
     "apiVersion": "^1.0.0",
-    "surfaces": ["office-editor"]
+    "surfaces": [
+      "office-editor"
+    ]
   },
   "storage": {
     "local": {
       "mode": "dexie",
-      "collections": ["office"]
+      "collections": [
+        "office"
+      ]
     }
   },
-  "permissions": ["office-editor.read", "office-editor.write"],
+  "permissions": [
+    "office-editor.read",
+    "office-editor.write"
+  ],
   "dependencies": [],
   "features": {},
   "sharedServices": [
@@ -57,11 +64,21 @@
     }
   ],
   "provides": {
-    "commands": ["office.list", "office.put", "office.delete"],
-    "events": ["office.changed"]
+    "commands": [
+      "office.list",
+      "office.put",
+      "office.delete"
+    ],
+    "events": [
+      "office.changed"
+    ]
   },
   "consumes": {
-    "commands": ["files.list", "files.put", "files.delete"],
+    "commands": [
+      "files.list",
+      "files.put",
+      "files.delete"
+    ],
     "events": []
   }
 }
